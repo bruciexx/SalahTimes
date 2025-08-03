@@ -15,7 +15,7 @@ time_utc = datetime.fromtimestamp(time.time(), timezone.utc)
 time_local = datetime.fromtimestamp(time_utc.timestamp())
 
 # get standard solar phases from current datetime and given position
-solar_phases = get_times(date=time_utc, lng=lon, lat=lat)
+solar_phases = get_times(date=time_local, lng=lon, lat=lat)
 
 # get epoch time for given solar phase
 
@@ -26,6 +26,7 @@ position = get_position(time_local, lon, lat)
 
 '''testing grounds'''
 
+print(solar_phases)
 print(time_utc_epoch)
 print(time_utc)
 print(time_local)

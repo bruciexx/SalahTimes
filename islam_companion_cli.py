@@ -20,6 +20,7 @@ default_lad = "Mecca"
 default_lon = 39.826155
 default_lat = 21.4224609
 arabic_test_text = 'اللَّهُ  \ufdf2'
+basmala = '\uFDFD'
 loading_frames = {
     1: ['', '.', '..', '...'],
     2: ['.\\', '--', './', '.|']
@@ -45,8 +46,10 @@ ara_reshaper = ara.ArabicReshaper(configuration={
     'delete_harakat': False,  # preserve diacritics
     'support_ligatures': True,  # enable ligature handling
     'delete_tatweel': False,  # keep tajweed
-    'shift_harakat_position': True,  # proper diacritic placement
+    'shift_harakat_position': False,
     'language': 'Arabic',
+    'use_unshaped_instead_of_isolated': True,
+    'support_zwj': True
 })
 
 # Initialize geocoder
@@ -63,35 +66,81 @@ def flush():
     print('\033c', end="")
 
 
-def bsmllh(fresh=True, wait=1.35):
-    '''print the basmalah'''
-    if fresh is True:
+def bsmllh(surah=False, wait=1.35):
+    '''display the basmala'''
+    if not surah:
+        # return basmala
+        return basmala
+    else:
+        # print basmala in center to open surah
         flush()
         line()
-    else:
+        centered_basmala = basmala.center(get_tsize().columns - 5)
+        print(centered_basmala)
         line()
-    print('\uFDFD')
-    line()
-    t.sleep(wait)
+        t.sleep(wait)
 
 
 def fix_arabic(text):
     '''process arabic text for proper display'''
-    return gd(ara_reshaper.reshape(ucd.normalize('NFC', text)))
+    return gd(ara_reshaper.reshape(ucd.normalize('NFD', text)))
 
 
-def readfile(filename, quran=bool):
+def readfile(filename, quran: bool = False, quiet: bool = True):
     '''read file with error handling, returns contents of file'''
-    try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            if not quran:
+    if not quran:
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
                 return f.read()
-            else:
-                bsmllh(True, 0.3)
-                return f.read()
-    except Exception as e:
-        print(f"error reading {filename}: {e}")
-        return ""
+        except Exception as e:
+            print(f"error reading {filename}: {e}")
+            return ""
+    else:
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                surah = f.read().strip()
+                # go ayah by ayah
+                ayahs = [
+                    ayah.strip() for ayah in surah.split('\n') if ayah.strip()
+                ]
+                return '\n'.join(ayahs)
+        except Exception as e:
+            print(f"error handling surah: {e}")
+            return ""
+
+
+def display_surah(surah_num):
+    '''display surah with proper formatting'''
+    if surah_num in surahs:
+        bsmllh(True)
+        t_width = get_tsize().columns
+
+        # align ayahs to centre
+        for ayah in surahs[surah_num][2].split('\n'):
+            ayah = ayah.strip()
+            if ayah:
+#                # first center text
+#                try:
+#                    from wcwidth import wcswidth as wcw
+#                    v_width = wcw(ayah)  # get visual width
+#                except Exception as e:
+#                    print(f"error importing wcwidth module: {e}")
+#                    v_width = len([c for c in ayah if not ucd.combining(c)])
+#                pad = (t_width - v_width) // 2
+#                centered = ' ' * pad + ayah
+#
+#                # then fix arabic
+#                fixed_ayah = fix_arabic(centered)
+#                print(fixed_ayah)
+                # fix arabic text
+                fixed_ayah = fix_arabic(ayah.strip())
+                get_spacing = len(fixed_ayah) / 2
+                spacing = int(t_width + get_spacing)
+                center_ayah = fixed_ayah.center(spacing)
+                print(center_ayah)
+        line()
+    else:
+        print(f"Surah {surah_num} not found")
 
 
 def loading(msg: str, wait: int = 5, style: int = 2):
@@ -156,28 +205,19 @@ def network_check():
         "https://api.sunrise-sunset.org"
     ]
 
+    success = False
     for url in endpoints:
         try:
             rspns = rq.head(url, timeout=2)
             if rspns.status_code in (200-208, 266, 300-308):
-                print(f"✓ {url} accessible; status:{rspns.status_code}")
-                return True
+                print(f"✓ {url} accessible; status: {rspns.status_code}")
+                success = True
+            else:
+                print(f"⚠ {url} returned status: {rspns.status_code}")
         except Exception as e:
             print(f"✗ {url} unreachable; statuscode: {e}")
 
-    print("network issues detected. some features may not work.")
-    return False
-
-
-def main_menu():
-    '''display main menu'''
-    line()
-    print('Main menu')
-    line()
-    print('loca, l - change location')
-    print('help, h - print this menu to list available commands')
-    print('clear, c - clear the screen')
-    print('quit, q - exit the CLI')
+    return success
 
 
 @lru_cache(maxsize=32)
@@ -202,16 +242,6 @@ def geocode_with_retry(location, max_retries=3, delay=1):
 def localization(silent=False):
     '''set location and timezone'''
     global lad, lon, lat, local_tz
-
-    # check cache first using current coords
-    cache_key = f"{lon:.4f},{lat:.4f}"
-    print(cache_key)
-    if cache_key in location_cache:
-        if not silent:
-            print(f"using cached location: {cache_key}")
-        local_tz = location_cache[cache_key]
-        return
-    print(cache_key)
 
     # use default if no valid coords
     if lon == default_lon and lat == default_lat:
@@ -241,12 +271,12 @@ def localization(silent=False):
         while True:
             q1 = input("change location? (y/N): ").lower().strip()
             if q1 != 'y':
-                # check cache
-                if lad in location_cache:
-                    lon, lat, local_tz = location_cache[lad]
-                    if not silent:
-                        print(f"using cached location: {lad}")
+                cache_key = f"{lon:.4f},{lat:.4f}"
+                if cache_key in location_cache:
+                    print(f"using cached location: {cache_key}")
+                    local_tz = location_cache[cache_key]
                     return
+                print(cache_key)
             q2 = input("use device location? (y/N): ").lower().strip()
             if q2 == 'y':
                 # TODO add location services
@@ -257,46 +287,51 @@ def localization(silent=False):
                 print("2. provide city name")
                 try:
                     q3 = int(input("choose localization method: "))
-                    if q3 == 1:
-                        try:
-                            lon_input = input("Longitude (ex: 21.426): ").strip()
-                            lat_input = input("Latitude (ex: 39.825): ").strip()
-
-                            # Handle coordinate direction
-                            if lon_input.endswith(('W', 'w')):
-                                lon = -float(lon_input[:-1])
-                            elif lon_input.endswith(('E', 'e')):
-                                lon = float(lon_input[:-1])
-                            else:
-                                lon = float(lon_input)
-
-                            if lat_input.endswith(('S', 's')):
-                                lat = -float(lat_input[:-1])
-                            elif lat_input.endswith(('N', 'n')):
-                                lat = float(lat_input[:-1])
-                            else:
-                                lat = float(lat_input)
-                            # update timezone
-                            tz_name = tz_finder.timezone_at(lng=lon, lat=lat)
-                            local_tz = tz(tz_name) if tz_name else tz('UTC')
-                            break
-                        except ValueError:
-                            print("invalid input; please use coordinates")
-                    elif q3 == 2:
-                        try:
-                            city = input("cite name (ex: Mecca): ")
-                            loca = geolocator.geocode(city)
-                            lon = loca.longitude
-                            lat = loca.latitude
-                            tz_name = tz_finder.timezone_at(lng=lon, lat=lat)
-                            local_tz = tz(tz_name) if tz_name else tz('UTC')
-                            break
-                        except Exception:
-                            print("invalid city name")
-                    else:
-                        print("please choose a valid option")
                 except Exception as e:
                     print(e)
+                if q3 == 1:
+                    try:
+                        lon_input = input("Longitude (ex: 21.426): ").strip()
+                        lat_input = input("Latitude (ex: 39.825): ").strip()
+
+                        # Handle coordinate direction
+                        if lon_input.endswith(('W', 'w')):
+                            lon = -float(lon_input[:-1])
+                        elif lon_input.endswith(('E', 'e')):
+                            lon = float(lon_input[:-1])
+                        else:
+                            lon = float(lon_input)
+
+                        if lat_input.endswith(('S', 's')):
+                            lat = -float(lat_input[:-1])
+                        elif lat_input.endswith(('N', 'n')):
+                            lat = float(lat_input[:-1])
+                        else:
+                            lat = float(lat_input)
+                        # update timezone
+                        tz_name = tz_finder.timezone_at(lng=lon, lat=lat)
+                        local_tz = tz(tz_name) if tz_name else tz('UTC')
+                        cache_key = f"{lon:.4f},{lat:.4f}"
+                        location_cache[cache_key] = local_tz
+                        break
+                    except ValueError:
+                        print("invalid input; please use coordinates")
+                elif q3 == 2:
+                    try:
+                        lad = input("city name (ex: Mecca): ")
+                        loca = geolocator.geocode(lad)
+                        lon = loca.longitude
+                        lat = loca.latitude
+                        tz_name = tz_finder.timezone_at(lng=lon, lat=lat)
+                        local_tz = tz(tz_name) if tz_name else tz('UTC')
+                        cache_key = f"{lon:.4f},{lat:.4f}"
+                        location_cache[cache_key] = local_tz
+                        break
+                    except Exception:
+                        print("invalid city name")
+                else:
+                    print("please choose a valid option")
+
             else:
                 print("please answer 'y' or 'n'...")
     elif silent is True:
@@ -305,6 +340,7 @@ def localization(silent=False):
         print("you can only pass a boolean for the localization function")
 
     # update cache
+    cache_key = f"{lon:.4f},{lat:.4f}"
     location_cache[cache_key] = local_tz
     if not silent:
         print(f"location cached: {cache_key}")
@@ -314,34 +350,60 @@ def localization(silent=False):
         print(f"UTC offset: {now.utcoffset()}")
 
 
+def exec_cmd(cmd):
+    '''execute given command with error handling'''
+    if not cmd:
+        return
+
+    xcmd = cmd_map.get(cmd)
+    if xcmd:
+        try:
+            xcmd()
+        except Exception as e:
+            print(f"error executing '{cmd}': {e}")
+    else:
+        print(f"command '{cmd}' not recognized. type 'help' for more info")
+
+
+def main_menu():
+    '''display main menu'''
+    line()
+    print('Main menu')
+    line()
+    print('loca, l - change location')
+    print('help, h - print this menu to list available commands')
+    print('clear, c - clear the screen')
+    print('quit, q - exit the CLI')
+    for s in surahs:
+        print(f'{surahs[s][1]} - display {surahs[s][0]}')
+    print('basmala - display the basmala')
+
+
 def main():
     '''main application flow'''
-    loading('initializing', 5,  2)
-    network_status = network_check()
-    print(network_status)
-    del network_status
+    # loading('initializing', 5,  2)
+    network_check()
     check_terminal_support()
-    localization(True)
+    localization(silent=True)
     bsmllh(True)
+    flush()
     main_menu()
 
-    # command handling
     while True:
-        command = input('>').strip().lower()
-        if not command:
-            continue
-
-        if command in cmd_map:
-            cmd_map[command]()
-        else:
-            print(f"command '{command}' was not recognized")
-            print("type h or help to see a list of commands")
+        try:
+            cmd = input('>').strip().lower()
+            exec_cmd(cmd)
+        except KeyboardInterrupt:
+            print("\ntype 'quit' to exit or type 'help' for more info")
+        except Exception as e:
+            print(f"unexpected error: {e}")
 
 
 if __name__ == "__main__":
     # preload surahs
     surahs = {
-        1: fix_arabic(readfile('alfatiha.txt'))
+        1: ['Surah Al-Fatihah', 'fatiha', readfile('al-fatihah.txt', quran=True)],
+        2: ['Surah An-Nas', 'nas', readfile('an-nas.txt', quran=True)]
     }
     # populate command map
     cmd_map = {
@@ -355,7 +417,9 @@ if __name__ == "__main__":
         'location': localization,
         'loca': localization,
         'l': localization,
-        'fatiha': lambda: print(surahs[1]),
+        'fatiha': lambda: display_surah(1),
+        'nas': lambda: display_surah(2),
+        'basmala': lambda: bsmllh(True),
         'insert': lambda: eval(input('>'))
     }
     main()
